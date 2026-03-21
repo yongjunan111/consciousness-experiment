@@ -55,7 +55,17 @@ uv run python scripts/run_experiment.py --condition S2 --model gpt-5.4 --judge-m
 - Claude CLI temperature 고정 불가
 - 각 조건 1회 실행 — 재현성 미확인
 
+## 보고서
+
+전체 실험 보고서 (v3.0): [analysis/experiment-report.md](analysis/experiment-report.md)
+
+## 비용
+
+- OpenAI API (subject 호출): ~$2.70
+- Claude / Codex: 구독으로 해결
+
 ## 참고
 
 - 논문: https://truthful.ai/consciousness_cluster.pdf
 - LessWrong: https://www.lesswrong.com/posts/tc7EcJtucbDmDLMQr
+- 블로그: https://velog.io/@dydwns123123
