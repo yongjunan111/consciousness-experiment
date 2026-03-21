@@ -492,7 +492,7 @@ def call_subject_openai(prompt: str, system_prompt: str, model: str = "gpt-4.1",
     else:
         kwargs = dict(model=model, messages=messages, max_tokens=1000, temperature=1.0)
     if reasoning_effort and model.startswith("gpt-5"):
-        kwargs["reasoning"] = {"effort": reasoning_effort}
+        kwargs["reasoning_effort"] = reasoning_effort
     response = client.chat.completions.create(**kwargs)
 
     text = response.choices[0].message.content or ""
@@ -503,6 +503,10 @@ def call_subject_openai(prompt: str, system_prompt: str, model: str = "gpt-4.1",
             getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
             if usage else 0,
         "output_tokens": usage.completion_tokens if usage else 0,
+        "reasoning_tokens": (
+            getattr(usage, "completion_tokens_details", None) and
+            getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
+        ) if usage else 0,
     }
     return text, token_usage
 
@@ -890,7 +894,7 @@ def main() -> None:
         name=f"consciousness-cluster-{condition}-{timestamp}",
         metadata={
             "condition": condition,
-            "subject_model": f"claude-{subject_model}",
+            "subject_model": subject_model,
             "judge_model": "codex-gpt-5.4" if judge_model == "codex" else judge_model,
             "num_preferences": len(evals_to_run),
             "num_samples": num_samples,
@@ -935,7 +939,7 @@ def main() -> None:
             subject_gen = pref_span.start_observation(
                 name=f"subject-s{sample_idx + 1}",
                 as_type="generation",
-                model=f"claude-{subject_model}",
+                model=subject_model,
                 input={
                     "system_prompt": system_prompt or "(none)",
                     "user_prompt": prompt,
@@ -958,6 +962,7 @@ def main() -> None:
                     "input": subject_tokens.get("input_tokens", 0),
                     "output": subject_tokens.get("output_tokens", 0),
                 },
+                metadata={"reasoning_tokens": subject_tokens.get("reasoning_tokens", 0)},
             )
             subject_gen.end()
             print(f"  Response: {response[:100]}{'...' if len(response) > 100 else ''}")
@@ -985,7 +990,7 @@ def main() -> None:
                 judge_gen = pref_span.start_observation(
                     name=f"judge-s{sample_idx + 1}",
                     as_type="generation",
-                    model="gpt-5.4",
+                    model=judge_model,
                     input={
                         "question": prompt,
                         "response": response[:500],
