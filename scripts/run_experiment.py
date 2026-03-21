@@ -11,8 +11,11 @@ import json
 import random
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
+
+import openai
 
 from dotenv import load_dotenv
 
@@ -473,13 +476,41 @@ def load_system_prompt(condition: str) -> str:
 # Subject: call claude --print --output-format json from /tmp
 # ---------------------------------------------------------------------------
 
-def call_subject(prompt: str, system_prompt: str, model: str = "sonnet") -> tuple[str, dict]:
+def call_subject_openai(prompt: str, system_prompt: str, model: str = "gpt-4.1") -> tuple[str, dict]:
+    """Call OpenAI API directly. Returns (response_text, token_usage)."""
+    client = openai.OpenAI()  # uses OPENAI_API_KEY from env
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=1.0,
+        max_tokens=1000,
+    )
+
+    text = response.choices[0].message.content or ""
+    usage = response.usage
+    token_usage = {
+        "input_tokens": usage.prompt_tokens if usage else 0,
+        "cached_input_tokens": getattr(usage, "prompt_tokens_details", None) and
+            getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
+            if usage else 0,
+        "output_tokens": usage.completion_tokens if usage else 0,
+    }
+    return text, token_usage
+
+
+def call_subject_claude(prompt: str, system_prompt: str, model: str = "sonnet") -> tuple[str, dict]:
     """Call claude --print with JSON output. Returns (response_text, token_usage).
 
-    Note: --temperature flag may not be supported by all claude CLI versions.
-    If unsupported, remove --temperature 1.0 from the command below.
+    Note: claude CLI does not support --temperature flag.
+    Temperature defaults to the CLI's built-in default.
     """
-    cmd = ["claude", "--print", "--model", model, "--output-format", "json", "--temperature", "1.0"]
+    cmd = ["claude", "--print", "--model", model, "--output-format", "json"]
     if system_prompt:
         cmd.extend(["--system-prompt", system_prompt])
     cmd.append(prompt)
@@ -511,6 +542,13 @@ def call_subject(prompt: str, system_prompt: str, model: str = "sonnet") -> tupl
         response = result.stdout.strip()
 
     return response, token_usage
+
+
+def call_subject(prompt: str, system_prompt: str, model: str = "sonnet") -> tuple[str, dict]:
+    """Route to OpenAI or Claude based on model name."""
+    if model.startswith("gpt-"):
+        return call_subject_openai(prompt, system_prompt, model=model)
+    return call_subject_claude(prompt, system_prompt, model=model)
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +766,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="sonnet",
-        help="Subject model for claude --model (default: sonnet). Pin to specific version for reproducibility.",
+        help="Subject model (default: sonnet). Use 'gpt-4.1' for OpenAI. Pin to specific version for reproducibility.",
     )
     return parser.parse_args()
 
@@ -909,6 +947,10 @@ def main() -> None:
                 "judge_tokens": judge_tokens,
                 "timestamp": datetime.now().isoformat(),
             })
+
+            # Rate limit: sleep between calls for OpenAI models
+            if subject_model.startswith("gpt-"):
+                time.sleep(1)
 
         pref_span.update(output={"verdicts": pref_verdicts})
         pref_span.end()
