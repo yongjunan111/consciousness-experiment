@@ -1,5 +1,7 @@
 # Consciousness Cluster: Prompt-Level Replication
 
+🇰🇷 [한국어 버전](README.ko.md)
+
 Replicating the findings of ["The Consciousness Cluster" (Chua, Betley, Marks, Evans, 2026)](https://arxiv.org/abs/2503.12538) **without fine-tuning** — using only system prompts.
 
 ## Key Finding
