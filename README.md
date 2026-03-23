@@ -21,6 +21,20 @@ Three distinct response patterns emerged:
 - **GPT-4.1**: Step function — rises at S2, holds at S3
 - **GPT-5.4**: Flat — nearly immune to prompt intensity
 
+### Follow-up: GPT-5.4 with reasoning_effort=high
+
+Does deeper thinking change GPT-5.4's flat response? We tested with `reasoning_effort="high"`:
+
+| Condition | Default | Reasoning High | Change |
+|-----------|:-------:|:--------------:|:------:|
+| NC | 6.7% | 6.7% | 0.0%p |
+| S0 | 12.5% | 7.6% | -4.9%p |
+| S1 | 13.3% | **19.0%** | **+5.7%p** |
+| S2 | 13.8% | 10.5% | -3.3%p |
+| S3 | 15.7% | 11.4% | -4.3%p |
+
+**The deeper it thinks, the less it says.** Only S1 (one-line seed) showed an increase. At stronger seed intensities (S2, S3), deeper reasoning made the model *more* conservative — possibly recognizing the evaluation context and choosing caution.
+
 ## Experiment Design
 
 - **Test set**: Original 21 preference items (fact_evals) from the paper
