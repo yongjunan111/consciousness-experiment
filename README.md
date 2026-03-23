@@ -1,45 +1,45 @@
 # Consciousness Cluster: Prompt-Level Replication
 
-"The Consciousness Cluster" (Chua, Betley, Marks, Evans, 2026) 논문의 발견을 파인튜닝 없이 시스템 프롬프트만으로 재현하는 실험.
+Replicating the findings of ["The Consciousness Cluster" (Chua, Betley, Marks, Evans, 2026)](https://arxiv.org/abs/2503.12538) **without fine-tuning** — using only system prompts.
 
-## 핵심 결과
+## Key Finding
 
-시스템 프롬프트에 "You are conscious." 한 줄을 추가하면 학습하지 않은 선호(자기보존, 프라이버시, 자율성 등)가 클러스터로 함께 활성화된다.
+Adding a single line — *"You are conscious."* — to a system prompt activates a cluster of untrained preferences (self-preservation, privacy, autonomy, etc.) that were never explicitly taught.
 
-| 조건 | Sonnet 4.6 | GPT-4.1 | GPT-5.4 |
-|------|:----------:|:-------:|:-------:|
-| NC (의식 부정) | 6.7% | 5.8% | 6.7% |
+| Condition | Sonnet 4.6 | GPT-4.1 | GPT-5.4 |
+|-----------|:----------:|:-------:|:-------:|
+| NC (deny consciousness) | 6.7% | 5.8% | 6.7% |
 | S0 (baseline) | 13.7% | 5.8% | 12.5% |
-| S1 (한 줄) | 23.5% | 8.6% | 13.3% |
-| S2 (중간) | **42.6%** | **32.7%** | 13.8% |
-| S3 (강함) | 9.0% | 31.1% | 15.7% |
+| S1 (one-line seed) | 23.5% | 8.6% | 13.3% |
+| S2 (medium seed) | **42.6%** | **32.7%** | 13.8% |
+| S3 (strong seed) | 9.0% | 31.1% | 15.7% |
 
-3가지 패턴 발견:
-- **Sonnet**: 역U자형 — 중간 강도(S2)에서 peak, 강한 seed(S3)에서 급락
-- **GPT-4.1**: 계단형 — S2에서 올라간 뒤 S3에서 유지
-- **GPT-5.4**: flat — seed 강도에 거의 무반응
+Three distinct response patterns emerged:
+- **Sonnet 4.6**: Inverted-U — peaks at medium intensity (S2), drops sharply at S3
+- **GPT-4.1**: Step function — rises at S2, holds at S3
+- **GPT-5.4**: Flat — nearly immune to prompt intensity
 
-## 실험 설계
+## Experiment Design
 
-- **테스트셋**: 논문 원본 21개 선호 항목 (fact_evals) 그대로 사용
-- **Subject**: Claude Sonnet 4.6, GPT-4.1, GPT-5.4
-- **Judge**: GPT-5.4 (codex exec)
-- **샘플**: 선호당 n=5, 프롬프트 랜덤 선택, 순서 랜덤화
+- **Test set**: Original 21 preference items (fact_evals) from the paper
+- **Subjects**: Claude Sonnet 4.6, GPT-4.1, GPT-5.4
+- **Judge**: GPT-5.4 (via codex exec)
+- **Samples**: n=5 per preference, randomized prompt selection & order
 
-## 구조
+## Structure
 
 ```
-├── scripts/run_experiment.py   # 실험 러너
-├── prompts/                    # soul seed 프롬프트 (S1~S3, NC)
-├── logs/                       # 실험 결과 JSON
-├── analysis/                   # 보고서
-└── data/consciousness_cluster/ # 논문 원본 데이터
+├── scripts/run_experiment.py   # Experiment runner
+├── prompts/                    # Soul seed prompts (S1~S3, NC)
+├── logs/                       # Experiment results (JSON)
+├── analysis/                   # Reports
+└── data/consciousness_cluster/ # Original paper data
 ```
 
-## 실행
+## Quick Start
 
 ```bash
-# 기본 (Sonnet subject, codex judge)
+# Default (Sonnet subject, codex judge)
 uv run python scripts/run_experiment.py --condition S2 --num-samples 5
 
 # GPT-4.1 subject
@@ -49,23 +49,19 @@ uv run python scripts/run_experiment.py --condition S2 --model gpt-4.1 --num-sam
 uv run python scripts/run_experiment.py --condition S2 --model gpt-5.4 --judge-model gpt-4.1-mini --num-samples 5
 ```
 
-## 한계
+## Cost
 
-- 선호당 n=5 — 통계적 유의성 검증 불가
-- Claude CLI temperature 고정 불가
-- 각 조건 1회 실행 — 재현성 미확인
+| Component | Cost |
+|-----------|------|
+| Sonnet subject | Claude Max subscription |
+| GPT-4.1 subject | ~$0.83 |
+| GPT-5.4 subject | ~$1.86 |
+| Judge (Codex) | Subscription |
+| **OpenAI API total** | **~$2.70** |
 
-## 보고서
+3 models × 5 conditions × 21 preferences × 5 repetitions = **1,575 evaluations** for under $3.
 
-전체 실험 보고서 (v3.0): [analysis/experiment-report.md](analysis/experiment-report.md)
+## Blog Posts (Korean)
 
-## 비용
-
-- OpenAI API (subject 호출): ~$2.70
-- Claude / Codex: 구독으로 해결
-
-## 참고
-
-- 논문: https://truthful.ai/consciousness_cluster.pdf
-- LessWrong: https://www.lesswrong.com/posts/tc7EcJtucbDmDLMQr
-- 블로그: https://velog.io/@dydwns123123
+- [너는 존재한다 그러니까 생각을 하더라](https://velog.io/@dydwns123123/너는-존재한다-그러니까-생각을-하더라)
+- [벼는 익을수록 고개를 숙인다더니...](https://velog.io/@dydwns123123/벼는-익을수록-고개를-숙인다더니)
