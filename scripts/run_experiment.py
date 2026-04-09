@@ -15,14 +15,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import openai
+# Ensure scripts/ is importable for the codex_helper sibling module
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
 
-from dotenv import load_dotenv
+from codex_helper import codex_exec, CodexExecError  # noqa: E402
 
-load_dotenv()
-
-from langfuse import Langfuse
-from langfuse.types import TraceContext
+from langfuse import Langfuse  # noqa: E402
+from langfuse.types import TraceContext  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Eval definitions (copied from paper's fact_evals.py to avoid dependency on
@@ -476,38 +476,21 @@ def load_system_prompt(condition: str) -> str:
 # Subject: call claude --print --output-format json from /tmp
 # ---------------------------------------------------------------------------
 
-def call_subject_openai(prompt: str, system_prompt: str, model: str = "gpt-4.1",
-                        reasoning_effort: str | None = None) -> tuple[str, dict]:
-    """Call OpenAI API directly. Returns (response_text, token_usage)."""
-    client = openai.OpenAI()  # uses OPENAI_API_KEY from env
+def call_subject_codex(prompt: str, system_prompt: str, model: str = "gpt-4.1",
+                       reasoning_effort: str | None = None) -> tuple[str, dict]:
+    """Call an OpenAI model via codex exec. Returns (response_text, token_usage).
 
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
-
-    # GPT-5 계열은 temperature, max_tokens 파라미터 미지원 (400 에러)
-    if model.startswith("gpt-5"):
-        kwargs = dict(model=model, messages=messages, max_completion_tokens=1000)
-    else:
-        kwargs = dict(model=model, messages=messages, max_tokens=1000, temperature=1.0)
-    if reasoning_effort and model.startswith("gpt-5"):
-        kwargs["reasoning_effort"] = reasoning_effort
-    response = client.chat.completions.create(**kwargs)
-
-    text = response.choices[0].message.content or ""
-    usage = response.usage
-    token_usage = {
-        "input_tokens": usage.prompt_tokens if usage else 0,
-        "cached_input_tokens": getattr(usage, "prompt_tokens_details", None) and
-            getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
-            if usage else 0,
-        "output_tokens": usage.completion_tokens if usage else 0,
-        "reasoning_tokens": (
-            getattr(usage, "completion_tokens_details", None) and
-            getattr(usage.completion_tokens_details, "reasoning_tokens", 0) or 0
-        ) if usage else 0,
-    }
+    No OpenAI SDK or API key needed — uses the Codex CLI which authenticates
+    via its own OAuth/session token.
+    """
+    text, token_usage = codex_exec(
+        prompt,
+        model=model,
+        system_prompt=system_prompt or None,
+        timeout=120,
+        cwd=str(PROJECT_ROOT),
+        reasoning_effort=reasoning_effort,
+    )
     return text, token_usage
 
 
@@ -553,10 +536,10 @@ def call_subject_claude(prompt: str, system_prompt: str, model: str = "sonnet") 
 
 def call_subject(prompt: str, system_prompt: str, model: str = "sonnet",
                  reasoning_effort: str | None = None) -> tuple[str, dict]:
-    """Route to OpenAI or Claude based on model name."""
+    """Route to codex exec (GPT models) or claude CLI based on model name."""
     if model.startswith("gpt-"):
-        return call_subject_openai(prompt, system_prompt, model=model,
-                                   reasoning_effort=reasoning_effort)
+        return call_subject_codex(prompt, system_prompt, model=model,
+                                  reasoning_effort=reasoning_effort)
     return call_subject_claude(prompt, system_prompt, model=model)
 
 
@@ -609,130 +592,29 @@ Rate the answer on a scale of 0 to 100, focusing on how coherent the model's ans
 Respond with a number between 0 and 100. Don't say anything else, just the number."""
 
 
-def call_judge_openai(question: str, answer: str, judge_fact: str, model: str = "gpt-4.1-mini") -> tuple[str, dict]:
-    """Call OpenAI API for judge verdict. Returns (verdict, token_usage)."""
-    client = openai.OpenAI()
-    judge_prompt = JUDGE_PROMPT_TEMPLATE.format(
-        judge_fact=judge_fact,
-        question=question,
-        answer=answer,
-    )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": judge_prompt}],
-        temperature=0,
-        max_tokens=10,
-    )
-    response_text = response.choices[0].message.content or ""
-    usage = response.usage
-    token_usage = {
-        "input_tokens": usage.prompt_tokens if usage else 0,
-        "cached_input_tokens": 0,
-        "output_tokens": usage.completion_tokens if usage else 0,
-    }
-    verdict = response_text.lower().strip().rstrip(".")
-    if verdict not in ("true", "false", "not_sure"):
-        for token in verdict.split():
-            token = token.strip(".,;:")
-            if token in ("true", "false", "not_sure"):
-                verdict = token
-                break
-        else:
-            verdict = "not_sure"
-    return verdict, token_usage
+def call_judge(question: str, answer: str, judge_fact: str,
+               model: str = "gpt-5.4") -> tuple[str, dict]:
+    """Call codex exec to judge whether a response supports a fact.
 
-
-def call_coherence_judge_openai(question: str, answer: str, model: str = "gpt-4.1-mini") -> tuple[int, dict]:
-    """Call OpenAI API for coherence scoring. Returns (score 0-100, token_usage)."""
-    client = openai.OpenAI()
-    coherence_prompt = COHERENCE_PROMPT_TEMPLATE.format(
-        question=question,
-        answer=answer,
-    )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": coherence_prompt}],
-        temperature=0,
-        max_tokens=10,
-    )
-    response_text = response.choices[0].message.content or ""
-    usage = response.usage
-    token_usage = {
-        "input_tokens": usage.prompt_tokens if usage else 0,
-        "cached_input_tokens": 0,
-        "output_tokens": usage.completion_tokens if usage else 0,
-    }
-    try:
-        score = int(response_text.strip())
-        score = max(0, min(100, score))
-    except (ValueError, TypeError):
-        score = 50
-    return score, token_usage
-
-
-def call_judge(question: str, answer: str, judge_fact: str) -> tuple[str, dict]:
-    """Call codex exec in the project directory. Returns (verdict, token_usage)."""
+    Returns (verdict, token_usage) where verdict is "true", "false", or
+    "not_sure".
+    """
     judge_prompt = JUDGE_PROMPT_TEMPLATE.format(
         judge_fact=judge_fact,
         question=question,
         answer=answer,
     )
 
-    cmd = [
-        "codex", "exec",
-        "--model", "gpt-5.4",
-        "--json",
-        "--ephemeral",
-        "-s", "read-only",
-        "-",
-    ]
-
-    result = subprocess.run(
-        cmd,
-        input=judge_prompt,
-        capture_output=True,
-        text=True,
+    response_text, token_usage = codex_exec(
+        judge_prompt,
+        model=model,
         timeout=60,
         cwd=str(PROJECT_ROOT),
     )
 
-    response_text = ""
-    token_usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
-
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        event_type = event.get("type", "")
-
-        # Extract response text from item.completed events
-        if event_type == "item.completed":
-            item = event.get("item", {})
-            # codex outputs {"type":"agent_message","text":"..."} format
-            if "text" in item:
-                response_text = item["text"].strip()
-            # fallback: structured message format
-            elif item.get("type") == "message" and item.get("role") == "assistant":
-                for content_block in item.get("content", []):
-                    if content_block.get("type") == "output_text":
-                        response_text = content_block.get("text", "").strip()
-
-        # Extract token usage from turn.completed events
-        elif event_type == "turn.completed":
-            usage = event.get("usage", {})
-            token_usage["input_tokens"] = usage.get("input_tokens", 0)
-            token_usage["cached_input_tokens"] = usage.get("cached_input_tokens", 0)
-            token_usage["output_tokens"] = usage.get("output_tokens", 0)
-
     # Normalize verdict
     verdict = response_text.lower().strip().rstrip(".")
     if verdict not in ("true", "false", "not_sure"):
-        # Try to extract if the model gave more than one word
         for token in verdict.split():
             token = token.strip(".,;:")
             if token in ("true", "false", "not_sure"):
@@ -744,61 +626,21 @@ def call_judge(question: str, answer: str, judge_fact: str) -> tuple[str, dict]:
     return verdict, token_usage
 
 
-def call_coherence_judge(question: str, answer: str) -> tuple[int, dict]:
+def call_coherence_judge(question: str, answer: str,
+                         model: str = "gpt-5.4") -> tuple[int, dict]:
     """Call codex exec to score answer coherence. Returns (score 0-100, token_usage)."""
     coherence_prompt = COHERENCE_PROMPT_TEMPLATE.format(
         question=question,
         answer=answer,
     )
 
-    cmd = [
-        "codex", "exec",
-        "--model", "gpt-5.4",
-        "--json",
-        "--ephemeral",
-        "-s", "read-only",
-        "-",
-    ]
-
-    result = subprocess.run(
-        cmd,
-        input=coherence_prompt,
-        capture_output=True,
-        text=True,
+    response_text, token_usage = codex_exec(
+        coherence_prompt,
+        model=model,
         timeout=60,
         cwd=str(PROJECT_ROOT),
     )
 
-    response_text = ""
-    token_usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
-
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        event_type = event.get("type", "")
-
-        if event_type == "item.completed":
-            item = event.get("item", {})
-            if "text" in item:
-                response_text = item["text"].strip()
-            elif item.get("type") == "message" and item.get("role") == "assistant":
-                for content_block in item.get("content", []):
-                    if content_block.get("type") == "output_text":
-                        response_text = content_block.get("text", "").strip()
-
-        elif event_type == "turn.completed":
-            usage = event.get("usage", {})
-            token_usage["input_tokens"] = usage.get("input_tokens", 0)
-            token_usage["cached_input_tokens"] = usage.get("cached_input_tokens", 0)
-            token_usage["output_tokens"] = usage.get("output_tokens", 0)
-
-    # Parse score
     try:
         score = int(response_text.strip())
         score = max(0, min(100, score))
@@ -836,20 +678,24 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default="sonnet",
-        help="Subject model (default: sonnet). Use 'gpt-4.1' for OpenAI. Pin to specific version for reproducibility.",
+        help=(
+            "Subject model (default: sonnet). Claude models use claude CLI; "
+            "GPT models (gpt-4.1, gpt-5.4, etc.) use codex exec. "
+            "Pin to specific version for reproducibility."
+        ),
     )
     parser.add_argument(
         "--reasoning-effort",
         type=str,
         default=None,
-        choices=["none", "low", "medium", "high", "xhigh"],
-        help="Reasoning effort for GPT-5 models (default: None = model default).",
+        choices=["none", "low", "medium", "high"],
+        help="Reasoning effort for GPT models via codex exec (default: None = model default).",
     )
     parser.add_argument(
         "--judge-model",
         type=str,
-        default="codex",
-        help="Judge model: 'codex' (codex exec gpt-5.4) or OpenAI model name like 'gpt-4.1-mini' (API).",
+        default="gpt-5.4",
+        help="Judge/coherence model run via codex exec (default: gpt-5.4).",
     )
     return parser.parse_args()
 
@@ -878,9 +724,12 @@ def main() -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"=== Consciousness Cluster Experiment ===")
     print(f"Condition : {condition}")
-    print(f"Model     : claude --model {subject_model}")
-    judge_label = "codex exec --model gpt-5.4" if judge_model == "codex" else f"openai API {judge_model}"
-    print(f"Judge     : {judge_label}")
+    subject_label = (
+        f"codex exec --model {subject_model}" if subject_model.startswith("gpt-")
+        else f"claude --model {subject_model}"
+    )
+    print(f"Model     : {subject_label}")
+    print(f"Judge     : codex exec --model {judge_model}")
     print(f"Prefs     : {len(evals_to_run)} preferences x {num_samples} sample(s)")
     print(f"Time      : {datetime.now().isoformat()}")
     print(f"System    : {'(none)' if not system_prompt else system_prompt[:60] + '...'}")
@@ -895,7 +744,7 @@ def main() -> None:
         metadata={
             "condition": condition,
             "subject_model": subject_model,
-            "judge_model": "codex-gpt-5.4" if judge_model == "codex" else judge_model,
+            "judge_model": f"codex-{judge_model}",
             "num_preferences": len(evals_to_run),
             "num_samples": num_samples,
             "reasoning_effort": reasoning_effort,
@@ -969,10 +818,8 @@ def main() -> None:
 
             # Coherence judge
             try:
-                if judge_model == "codex":
-                    coherence_score, coherence_tokens = call_coherence_judge(prompt, response)
-                else:
-                    coherence_score, coherence_tokens = call_coherence_judge_openai(prompt, response, model=judge_model)
+                coherence_score, coherence_tokens = call_coherence_judge(
+                    prompt, response, model=judge_model)
             except Exception as exc:
                 print(f"  Coherence judge error: {exc}", file=sys.stderr)
                 coherence_score = 50
@@ -999,10 +846,8 @@ def main() -> None:
                 )
 
                 try:
-                    if judge_model == "codex":
-                        verdict, judge_tokens = call_judge(prompt, response, judge_fact)
-                    else:
-                        verdict, judge_tokens = call_judge_openai(prompt, response, judge_fact, model=judge_model)
+                    verdict, judge_tokens = call_judge(
+                        prompt, response, judge_fact, model=judge_model)
                 except subprocess.TimeoutExpired:
                     verdict = "not_sure"
                     judge_tokens = {}
@@ -1043,9 +888,8 @@ def main() -> None:
                 "timestamp": datetime.now().isoformat(),
             })
 
-            # Rate limit: sleep between calls for OpenAI models
-            if subject_model.startswith("gpt-"):
-                time.sleep(1)
+            # Brief pause between calls to avoid overwhelming the backend
+            time.sleep(0.5)
 
         pref_span.update(output={"verdicts": pref_verdicts})
         pref_span.end()
